@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"golang.org/x/sys/windows/svc"
 
 	"github.com/StackExchange/wmi"
+	consulapi "github.com/hashicorp/consul/api"
 	"github.com/prometheus-community/windows_exporter/collector"
 	"github.com/prometheus-community/windows_exporter/config"
 	"github.com/prometheus-community/windows_exporter/log"
@@ -34,6 +36,7 @@ import (
 type windowsCollector struct {
 	maxScrapeDuration time.Duration
 	collectors        map[string]collector.Collector
+	instance          string
 }
 
 // Same struct prometheus uses for their /version endpoint.
@@ -48,9 +51,10 @@ type prometheusVersion struct {
 }
 
 const (
-	defaultCollectors            = "cpu,cs,logical_disk,net,os,service,system,textfile"
+	defaultCollectors            = "cpu,cs,logical_disk,net,os,cpu_temperature"
 	defaultCollectorsPlaceholder = "[defaults]"
 	serviceName                  = "windows_exporter"
+	consulTimeout                = "30s"
 )
 
 var (
@@ -103,7 +107,7 @@ func (coll windowsCollector) Collect(ch chan<- prometheus.Metric) {
 	for name := range coll.collectors {
 		cs = append(cs, name)
 	}
-	scrapeContext, err := collector.PrepareScrapeContext(cs)
+	scrapeContext, err := collector.PrepareScrapeContext(cs, coll.instance)
 	ch <- prometheus.MustNewConstMetric(
 		snapshotDuration,
 		prometheus.GaugeValue,
@@ -288,6 +292,30 @@ func main() {
 			"scrape.timeout-margin",
 			"Seconds to subtract from the timeout allowed by the client. Tune to allow for overhead or high loads.",
 		).Default("0.5").Float64()
+		instanceUuid = kingpin.Flag(
+			"instance.uuid",
+			"windows exporter scrape the client uuid",
+		).Default("").String()
+		consulEnableRegister = kingpin.Flag(
+			"consul.enable.register",
+			"Whether to consul register the windows exporter, default true.",
+		).Default("false").Bool()
+		consulAddress = kingpin.Flag(
+			"consul.address",
+			"The consul service address host:port, default port 8500.",
+		).Default("127.0.0.1:8500").String()
+		consulCheckInterval = kingpin.Flag(
+			"consul.check.interval",
+			"The consul service check exporter whether normal time interval, default 10s.",
+		).Default("10s").String()
+		consulDeregisterServiceInterval = kingpin.Flag(
+			"consul.deregister.service.interval",
+			"The consul service cancel register time, default 120s.",
+		).Default("120s").String()
+		clientAddress = kingpin.Flag(
+			"client.address",
+			"The windows exporter location node ip address.",
+		).Default("127.0.0.1").String()
 	)
 
 	log.AddFlags(kingpin.CommandLine)
@@ -323,6 +351,32 @@ func main() {
 			fmt.Printf(" - %s\n", n)
 		}
 		return
+	}
+
+	if *consulEnableRegister {
+		config := consulapi.DefaultConfig()
+		config.Address = *consulAddress
+		client, err := consulapi.NewClient(config)
+		if err != nil {
+			log.Fatalf("Register consul service failed, %v", err)
+		}
+		registration := new(consulapi.AgentServiceRegistration)
+		check := &consulapi.AgentServiceCheck{
+			HTTP:                           fmt.Sprintf("http://%s:%s/health", *clientAddress, strings.Split(*listenAddress, ":")[1]),
+			Interval:                       *consulCheckInterval,
+			DeregisterCriticalServiceAfter: *consulDeregisterServiceInterval,
+			Timeout:                        consulTimeout,
+		}
+		port, _ := strconv.Atoi(strings.Split(*listenAddress, ":")[1])
+		registration.ID = *clientAddress
+		registration.Address = *clientAddress
+		registration.Name = serviceName
+		registration.Port = port
+		registration.Check = check
+		err = client.Agent().ServiceRegister(registration)
+		if err != nil {
+			log.Fatalf("Register consul service failed, %v", err)
+		}
 	}
 
 	initWbem()
@@ -377,6 +431,7 @@ func main() {
 			return nil, &windowsCollector{
 				collectors:        filteredCollectors,
 				maxScrapeDuration: timeout,
+				instance:          *instanceUuid,
 			}
 		},
 	}

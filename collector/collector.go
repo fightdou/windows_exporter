@@ -102,17 +102,18 @@ type Collector interface {
 
 type ScrapeContext struct {
 	perfObjects map[string]*perflib.PerfObject
+	instance    string
 }
 
 // PrepareScrapeContext creates a ScrapeContext to be used during a single scrape
-func PrepareScrapeContext(collectors []string) (*ScrapeContext, error) {
+func PrepareScrapeContext(collectors []string, instance string) (*ScrapeContext, error) {
 	q := getPerfQuery(collectors) // TODO: Memoize
 	objs, err := getPerflibSnapshot(q)
 	if err != nil {
 		return nil, err
 	}
 
-	return &ScrapeContext{objs}, nil
+	return &ScrapeContext{objs, instance}, nil
 }
 func boolToFloat(b bool) float64 {
 	if b {

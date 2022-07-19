@@ -70,7 +70,7 @@ func NewOSCollector() (Collector, error) {
 		PhysicalMemoryFreeBytes: prometheus.NewDesc(
 			prometheus.BuildFQName(Namespace, subsystem, "physical_memory_free_bytes"),
 			"OperatingSystem.FreePhysicalMemory",
-			nil,
+			[]string{"virt"},
 			nil,
 		),
 		Time: prometheus.NewDesc(
@@ -171,7 +171,7 @@ func (c *OSCollector) collect(ctx *ScrapeContext, ch chan<- prometheus.Metric) (
 
 	currentTime := time.Now()
 	timezoneName, _ := currentTime.Zone()
-
+	uuid := ctx.instance
 	// Get total allocation of paging files across all disks.
 	memManKey, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management`, registry.QUERY_VALUE)
 	defer memManKey.Close()
@@ -242,6 +242,7 @@ func (c *OSCollector) collect(ctx *ScrapeContext, ch chan<- prometheus.Metric) (
 		c.PhysicalMemoryFreeBytes,
 		prometheus.GaugeValue,
 		float64(gmse.AvailPhys),
+		uuid,
 	)
 
 	ch <- prometheus.MustNewConstMetric(
