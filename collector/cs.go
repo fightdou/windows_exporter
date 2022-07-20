@@ -29,13 +29,13 @@ func NewCSCollector() (Collector, error) {
 		LogicalProcessors: prometheus.NewDesc(
 			prometheus.BuildFQName(Namespace, subsystem, "logical_processors"),
 			"ComputerSystem.NumberOfLogicalProcessors",
-			nil,
+			[]string{"virt"},
 			nil,
 		),
 		PhysicalMemoryBytes: prometheus.NewDesc(
 			prometheus.BuildFQName(Namespace, subsystem, "physical_memory_bytes"),
 			"ComputerSystem.TotalPhysicalMemory",
-			nil,
+			[]string{"virt"},
 			nil,
 		),
 		Hostname: prometheus.NewDesc(
@@ -44,7 +44,8 @@ func NewCSCollector() (Collector, error) {
 			[]string{
 				"hostname",
 				"domain",
-				"fqdn"},
+				"fqdn",
+				"virt"},
 			nil,
 		),
 	}, nil
@@ -53,16 +54,17 @@ func NewCSCollector() (Collector, error) {
 // Collect sends the metric values for each metric
 // to the provided prometheus Metric channel.
 func (c *CSCollector) Collect(ctx *ScrapeContext, ch chan<- prometheus.Metric) error {
-	if desc, err := c.collect(ch); err != nil {
+	if desc, err := c.collect(ctx, ch); err != nil {
 		log.Error("failed collecting cs metrics:", desc, err)
 		return err
 	}
 	return nil
 }
 
-func (c *CSCollector) collect(ch chan<- prometheus.Metric) (*prometheus.Desc, error) {
+func (c *CSCollector) collect(ctx *ScrapeContext, ch chan<- prometheus.Metric) (*prometheus.Desc, error) {
 	// Get systeminfo for number of processors
 	systemInfo := sysinfoapi.GetSystemInfo()
+	uuid := ctx.instance
 
 	// Get memory status for physical memory
 	mem, err := sysinfoapi.GlobalMemoryStatusEx()
@@ -74,12 +76,14 @@ func (c *CSCollector) collect(ch chan<- prometheus.Metric) (*prometheus.Desc, er
 		c.LogicalProcessors,
 		prometheus.GaugeValue,
 		float64(systemInfo.NumberOfProcessors),
+		uuid,
 	)
 
 	ch <- prometheus.MustNewConstMetric(
 		c.PhysicalMemoryBytes,
 		prometheus.GaugeValue,
 		float64(mem.TotalPhys),
+		uuid,
 	)
 
 	hostname, err := sysinfoapi.GetComputerName(sysinfoapi.ComputerNameDNSHostname)
@@ -102,6 +106,7 @@ func (c *CSCollector) collect(ch chan<- prometheus.Metric) (*prometheus.Desc, er
 		hostname,
 		domain,
 		fqdn,
+		uuid,
 	)
 
 	return nil, nil
